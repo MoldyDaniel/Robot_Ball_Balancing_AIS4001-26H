@@ -17,7 +17,8 @@
   c2 = 5
 
 */
-  
+
+#include "Arduino.h"
 #include "PololuMaestro.h"
 #define maestroSerial SERIAL_PORT_HARDWARE_OPEN //for teensy
 MicroMaestro maestro(maestroSerial);  // if using the Maestro Micro controller 
@@ -57,7 +58,7 @@ void setup() {
   maestroSerial.begin(9600);
 
   // moves servos to 0 degree position
-  int pos;
+  //int pos;
   for(int i = 0; i < 6; i++){
     maestro.setSpeed(i, 0); //sets speed to servo i
     maestro.setAcceleration(i, 0); //setsacceleration to servo i
