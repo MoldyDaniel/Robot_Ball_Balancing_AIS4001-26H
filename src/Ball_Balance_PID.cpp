@@ -42,7 +42,7 @@ float offset[6] = {
 };
 
 // TUNE: INPUTS FROM CAMERA CALIBRATION
-float origin[2] = {160, 160}; //{ 151, 98 };  // (144, 108) X and Y co-ords of the  (in the camera frame)
+float origin[2] = { 151, 98 };  // (144, 108) X and Y co-ords of the  (in the camera frame)
 float r_platform = 94;   // (121) distance from the center of the platform to the corner of the platform seen from the pixy2 cam
 
 
@@ -55,27 +55,36 @@ float pitch_home = 0;
 float yaw_home = 0;
 
 // TUNE: MAX AVERAGE ANGLE CHANGE (PITCH AND ROLL) IN ONE STEP - DEGREES
-float r_max = 15;
+float r_max = 10;
+
+
+//float kp = 0.025;
+//float kd = 0.015;
+//float ki = 0.01;
+
 
 // TUNE: PID CONSTANTS VALUES
-float kp = 0.5;         // proportional constant 6e-4
-float kd = 0.2;         // derivative constant 0.56
-float ki = 0;         // integral constant
+float kp = 0.02;   // 0.032
+float kd = 0.032;   // 0.025
+float ki = 0.01;     // 0.02
+
+float max_I_angle = 10; // max 10 degrees
+float max_integral = max_I_angle/ki;
 
 // TUNE: Low pass filter constant T
-float T = 0.08;
+float T = 0.06;
 
 // TUNE: MOTOR VELOCITIES AND ACCELERATIONS
 int vel_home = 20;
 int acc_home = 20;
-int vel_control = 60;
-int acc_control = 60;
+int vel_control = 25;
+int acc_control = 30;
 
 // TUNE: INPUTS FROM MEASUREMENTS (mm)
 float l0 = 73.025; // from h0 to a0
 float d1 = 36.8893; // from a0 to a01
 float lf = 67.775; // from hf to midle af1-cf2
-float m = 12.7; // from previous middle point to af1
+float m = 12;//12.7; // from previous middle point to af1
 float p1 = 31.75; // motor small arm
 float p2 = 129; // motor long arm
 
@@ -139,7 +148,7 @@ float error_prev[2];  // previous error value used to calculate derivative. Deri
 float deriv[2] = {0,0};     // Initialize derivative of the error
 float integral[2] = {0, 0}; // Initialize integral (x, y components)
 float out[2];         // output values (pitch and roll) in degrees
-float time_i;         // initial time
+unsigned long time_i = 0;         // initial time
 float time_f;         // final time
 float delta_time;     // change in time (rename from 'time')
 
@@ -159,6 +168,11 @@ void rotations(float* result, float hi[3],
 
 float mag(float array[]);
 float dot(float array1[], float array2[]);
+
+
+
+// Kalman filter function
+void kalmanFilter();
 
 void setup() {
   Serial.begin(115200);
@@ -183,9 +197,15 @@ void loop() {
 // move servo i to an input position at a certain speed and acceleration value
 void moveServo(int i, float pos, int spd, int acc) {        
   pos = pos + offset[i];                                    //adds offset amount to the input position (degrees)
-  pos = map(pos, range[i][0], range[i][1], abs_0, abs_90);  //converts input pos to ms position
+
+
+  //pos = map(pos, range[i][0], range[i][1], abs_0, abs_90);  //converts input pos to ms position
+
+  // arduino's map only outputs integers, not floats
+  pos = abs_0 + (pos - range[i][0]) * (abs_90 - abs_0) / (range[i][1] - range[i][0]);
+
   maestro.setSpeed(i, spd);                                 //sets input speed to servo i
-  maestro.setAcceleration(i, spd);                          //sets input acceleration to servo i
+  maestro.setAcceleration(i, acc);                          //sets input acceleration to servo i
   maestro.setTarget(i, pos);                                //drives motor to calculated position
 }
 
@@ -196,7 +216,11 @@ void moveServos(int spd, int acc) {
     maestro.setSpeed(i, spd);                                 //sets input speed to servo i
     maestro.setAcceleration(i, acc);                          //sets input acceleration to servo i
     pos = theta[i] + offset[i];                               //adds offset amount to the calculated angle (degrees)
-    pos = map(pos, range[i][0], range[i][1], abs_0, abs_90);  //converts input pos to ms position
+    //pos = map(pos, range[i][0], range[i][1], abs_0, abs_90);  //converts input pos to ms position
+
+
+    pos = abs_0 + (pos - range[i][0]) * (abs_90 - abs_0) / (range[i][1] - range[i][0]);
+
     maestro.setTarget(i, pos);                                //drives motor to calculated position
   }
 }
@@ -241,12 +265,13 @@ void PID() {
   error[x] = ball[x] - origin[x];  // x component of error (origin x-axis and camera x-axis are the same)
   error[y] = -(ball[y] - origin[y]);  // y component of error (origin y-axis and camera y-axis are opposite)
 
-  Serial.println("Ball position: [X]: " +  String(ball[x]) + "  [Y]: " + String(ball[x]));
+  Serial.println("Ball position: [X]: " +  String(ball[x]) + "  [Y]: " + String(ball[y]));
 
 
-  time_f = millis();             // sets final time
-  delta_time = (time_f - time_i) / 1000;  // change in time (seconds)
-  time_i = millis(); // sets initial time
+  unsigned long time_now = millis();
+  //time_f = millis();             // sets final time
+  delta_time = (time_now - time_i) / 1000.f;  // change in time (seconds)
+  time_i = time_now; // sets initial time
 
   // x and y components of derivative with low-pass filter  
   deriv[x] = deriv[x] + delta_time/T*( -deriv[x] + (error[x] - error_prev[x]) / delta_time ); 
@@ -254,7 +279,11 @@ void PID() {
 
   // Trapezoidal rule for integral values of x and y
   integral[x] += (error[x] + error_prev[x]) * delta_time / 2.0; 
-  integral[y] += (error[y] + error_prev[y]) * delta_time / 2.0; 
+  integral[y] += (error[y] + error_prev[y]) * delta_time / 2.0;
+
+  integral[x] = constrain(integral[x], -max_integral, max_integral);
+  integral[y] = constrain(integral[y], -max_integral, max_integral);
+
 
   // checks if derivative is NaN or INF. If so, set to zero
   if (isnan(deriv[x]) || isinf(deriv[x])) {  // x component of derivative
@@ -537,4 +566,9 @@ float mag(float array[]) {
 //calculates the dot product of two arrays
 float dot(float array1[], float array2[]) {  
   return array1[0] * array2[0] + array1[1] * array2[1] + array1[2] * array2[2];
+}
+
+
+void kalmanFilter() {
+
 }
